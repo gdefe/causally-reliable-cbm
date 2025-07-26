@@ -28,7 +28,7 @@ from src.hydra_parsing import parse_hyperparams
 from src.data.utils import static_graph_collate
 from src.metrics import hamming_distance
 from src.plots import maybe_plot_graph
-from src.utils import get_intervention_policy, remove_cycles, remove_problematic_edges
+from src.utils import get_intervention_policy, remove_cycles, remove_problematic_edges, maybe_corrupt_graph
 from src.utils import clean_empty_configs, update_config_from_data, maybe_update_config_with_graph
 from src.utils import finetune_model
 
@@ -98,6 +98,15 @@ def main(cfg: DictConfig) -> None:
         hamming = hamming_distance(true_graph, graph)
         print('(after fix) structural hamming distance: ', hamming)
     maybe_plot_graph(graph, 'fixed_graph')
+
+    # corrupt the graph for ablation studies
+    if cfg.dataset.corrupt_graph:
+        corrupted_graph = maybe_corrupt_graph(graph, 
+                                              corruption_type = cfg.dataset.corrupt_graph_type, 
+                                              corrupt_graph_percentage = cfg.dataset.corrupt_graph_percentage)
+        print('corrupted graph:', corrupted_graph)
+        graph = corrupted_graph
+        maybe_plot_graph(graph, 'corrupted_graph')
 
     # use the graph to define an intervention policy at test time
     interv_policy, ip_names = get_intervention_policy(cfg.policy, graph, true_graph, y_index)

@@ -1,3 +1,4 @@
+from networkx import nodes
 import torch
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ from scipy.sparse.linalg import LinearOperator
 from scipy.optimize import Bounds, NonlinearConstraint
 import warnings
 import numbers
+import random
 
 def model_has_concepts(model):
     if target_classname(model) in ['BlackBox_Multi', 'CBM', 'CEM', 'C2BM', 'SCBM']:
@@ -293,6 +295,145 @@ def check_graph(graph_levels, true_graph):
             assert node_index == len_node_to_roots, \
                 f"The position of the node {node} in the graph levels is not correct"
 
+def maybe_corrupt_graph(graph, corruption_type = 'random_perturbation', corrupt_graph_percentage = 0.1):
+    """
+    Corrupt the graph by randomly removing/ adding/ flipping edges.
+    Attributes:
+        graph (Dataframe): A dictionary containing the graph information.
+
+    Returns:
+        Dataframe: The corrupted graph.
+    """
+    corrupted_matrix = graph.values
+    n = len(corrupted_matrix)
+    print('Corrupting causal graph...')
+
+    if corruption_type == 'random_perturbation':
+        # randomly add, remove, or flip a percentage of all possible edges in the graph
+        
+        upper_indices = [(i, j) for i in range(n-1) for j in range(i+1, n)]
+        # shuffle the upper indices to randomly select edges
+        random.shuffle(upper_indices)
+
+        k = int(corrupt_graph_percentage * len(upper_indices))  # number of changes to make: a percentage of the total number of edges
+        if k == 0:
+            print('No changes to be made, k is 0')
+            return graph
+
+        print(f'Number of changes to be made: {k}')
+        changes = 0
+        idx = 0
+        while changes < k and idx < len(upper_indices):
+            i, j = upper_indices[idx]
+            a, b = corrupted_matrix[i, j], corrupted_matrix[j, i]
+            changes += 1
+            idx += 1
+
+            if (a, b) == (1, 0):  # edge i → j exists
+                op = random.choice(["remove", "flip"])
+                if j == n-1:
+                    # if the edge is to the last node, we can only remove it
+                    # otherise the task node will have a child
+                    op = "remove"
+                    if np.sum(corrupted_matrix[:, -1] == 1) <= 1:
+                        print("The last node has no incoming edges, therefore we cannot remove the edge", i, "->", j)
+                        changes -= 1
+                        continue  # don't remove the last edge to the final node
+                       
+                if op == "remove":
+                    print("Removing edge:", i, "->", j)
+                    corrupted_matrix[i, j] = 0
+                    corrupted_matrix[j, i] = 0
+                elif op == "flip":
+                    print("Flipping edge:", i, "->", j, "to", i, "<-", j)
+                    corrupted_matrix[i, j] = 0
+                    corrupted_matrix[j, i] = 1
+
+            elif (a, b) == (0, 1):  # edge j → i exists
+                op = random.choice(["remove", "flip"])
+                if op == "remove":
+                    print("Removing edge:", j, "->", i)
+                    corrupted_matrix[i, j] = 0
+                    corrupted_matrix[j, i] = 0
+                elif op == "flip":
+                    print("Flipping edge:", j, "->", i, "to", j, "<-", i)
+                    corrupted_matrix[i, j] = 1
+                    corrupted_matrix[j, i] = 0
+            elif (a, b) == (0, 0):  # no edge exists, we can add one of the two
+                op = random.choice(["direct", "indirect"])
+                if j == n-1:
+                    op = "direct"
+
+                if op == "direct":
+                    print("Adding edge:", i, "->", j)
+                    corrupted_matrix[i, j] = 1
+                    corrupted_matrix[j, i] = 0
+                else:
+                    print("Adding edge:", j, "->", i)
+                    corrupted_matrix[i, j] = 0
+                    corrupted_matrix[j, i] = 1
+            else:
+                print("Unexpected edge type between ", i, "and ", j)
+                changes -= 1 
+                continue  # ignore ambiguous or inconsistent cases, if exists (e.g., -1)
+
+
+
+    elif corruption_type == 'cbm_perturbation':
+
+        # randomly connecting nodes to the task node
+        # exclude the last node (task node)
+        nodes_notask = list(range(n-1))
+        random.shuffle(nodes_notask)
+
+        k = max(1, int(len(nodes_notask) * corrupt_graph_percentage))
+        
+        if k == 0:
+            print('No changes to be made, k is 0')
+            return graph
+
+        print(f'Number of nodes to connect to the task: {k}')
+        for i in nodes_notask[:k]:
+            print("Connecting node ", i, "to the task node and removing other outgoing edges")
+            # If there are outgoing edges to nodes other than the task node, remove them
+            corrupted_matrix[i,:(n-1)]=0
+            # add the edge i -> n-1 (task node)
+            corrupted_matrix[i, n-1] = 1
+               
+
+    elif corruption_type == 'random_graph':
+    
+        corrupted_matrix = np.zeros((n, n), dtype=int)
+        k = int(corrupt_graph_percentage * n * (n - 1)/2)  # number of edges to add
+        if k == 0:
+            print('No edge to be inserted, k is 0')
+            return graph
+
+        print(f'Number of edges to be added: {k}')
+        while k > 0:
+            i = random.randint(0, n-2)
+            j = random.randint(i+1, n-1)
+            if k == 1 and np.sum(corrupted_matrix[:, -1] == 1) == 0:  
+                # if the last node has no incoming edges, we can only add an edge to it
+                j = n-1  
+            op = random.choice(["direct", "indirect"])
+            if j == n-1:  # if the edge is to the last node, we can only add it
+                op = "direct"
+
+            if corrupted_matrix[i, j] == 0 and corrupted_matrix[j, i] == 0:  # no edge exists
+                k -= 1
+                if op == "direct":  # add edge i -> j
+                    corrupted_matrix[i, j] = 1
+                    print(f'Adding edge: {i} -> {j}')
+                else:  # add edge j -> i
+                    corrupted_matrix[j, i] = 1             
+                    print(f'Adding edge: {j} -> {i}')
+
+    # check if the graph has cycles and remove them
+    corrupted_graph = pd.DataFrame(corrupted_matrix, index=graph.index, columns=graph.columns, dtype=int)
+    corrupted_graph = remove_cycles(corrupted_graph, len(corrupted_graph) - 1)  # fix the graph after corruption   
+    print("Done corrupting the graph")
+    return corrupted_graph
 
 def get_policy_from_graph(graph, y_index):
     # get the levels of the graph

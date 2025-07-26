@@ -2,7 +2,6 @@ conf/my_sweep*.yaml
 launch.json
 _OLD
 .vscode
-plots*
 plot_cub_graph.py
 cub_graph.png
 test.txt
