@@ -297,12 +297,18 @@ def check_graph(graph_levels, true_graph):
 
 def maybe_corrupt_graph(graph, corruption_type = 'random_perturbation', corrupt_graph_percentage = 0.1):
     """
-    Corrupt the graph by randomly removing/ adding/ flipping edges.
-    Attributes:
-        graph (Dataframe): A dictionary containing the graph information.
-
+    This function corrupts the causal graph according to the specified corruption type.
+    It can be used for ablation studies to test the robustness of the model to different types
+    of graph corruption.
+    Args:
+        graph (DataFrame): graph to be corrupted
+        corruption_type (str): type of corruption to be applied, can be one of:
+            - 'random_perturbation': randomly add, remove, or flip a percentage of all possible edges in the graph
+            - 'cbm_perturbation': randomly connect a percentage of nodes to the task node, making the graph tend toward a CBM
+            - 'random_graph': randomly add edges to the graph
+        corrupt_graph_percentage (float): percentage of edges to corrupt
     Returns:
-        Dataframe: The corrupted graph.
+        graph (DataFrame): corrupted graph
     """
     corrupted_matrix = graph.values
     n = len(corrupted_matrix)
@@ -380,14 +386,12 @@ def maybe_corrupt_graph(graph, corruption_type = 'random_perturbation', corrupt_
 
 
     elif corruption_type == 'cbm_perturbation':
-
         # randomly connecting nodes to the task node
-        # exclude the last node (task node)
         nodes_notask = list(range(n-1))
         random.shuffle(nodes_notask)
 
-        k = max(1, int(len(nodes_notask) * corrupt_graph_percentage))
-        
+        k = int(corrupt_graph_percentage * len(nodes_notask))
+
         if k == 0:
             print('No changes to be made, k is 0')
             return graph
@@ -402,6 +406,7 @@ def maybe_corrupt_graph(graph, corruption_type = 'random_perturbation', corrupt_
                
 
     elif corruption_type == 'random_graph':
+        # randomly add edges to the graph
     
         corrupted_matrix = np.zeros((n, n), dtype=int)
         k = int(corrupt_graph_percentage * n * (n - 1)/2)  # number of edges to add
